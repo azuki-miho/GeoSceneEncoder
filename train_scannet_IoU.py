@@ -28,7 +28,7 @@ parser.add_argument('--gpu', type=int, default=0, help='GPU to use [default: GPU
 parser.add_argument('--model', default='model', help='Model name [default: model]')
 parser.add_argument('--log_dir', default='log', help='Log dir [default: log]')
 parser.add_argument('--num_point', type=int, default=8192, help='Point Number [default: 8192]')
-parser.add_argument('--max_epoch', type=int, default=1001, help='Epoch to run [default: 1001]')
+parser.add_argument('--max_epoch', type=int, default=1501, help='Epoch to run [default: 1501]')
 parser.add_argument('--batch_size', type=int, default=8, help='Batch Size during training [default: 8]')
 parser.add_argument('--learning_rate', type=float, default=0.001, help='Initial learning rate [default: 0.001]')
 parser.add_argument('--momentum', type=float, default=0.9, help='Initial learning rate [default: 0.9]')
@@ -76,9 +76,9 @@ NUM_CLASSES = 21
 # Shapenet official train/test split
 DATA_PATH = os.path.join(BASE_DIR, 'scannet')
 print("start loading training data ...")
-TRAIN_DATASET = scannet_dataset_rgb.ScannetDataset(root=DATA_PATH, block_points=NUM_POINT, split='train')
+TRAIN_DATASET = scannet_dataset_rgb.ScannetDataset(root=DATA_PATH, block_points=NUM_POINT, split='train', with_rgb=True)
 print("start loading validation data ...")
-TEST_DATASET = scannet_dataset_rgb.ScannetDataset(root=DATA_PATH, block_points=NUM_POINT, split='val')
+TEST_DATASET = scannet_dataset_rgb.ScannetDataset(root=DATA_PATH, block_points=NUM_POINT, split='val', with_rgb=True)
 print("start loading whole scene validation data ...")
 TEST_DATASET_WHOLE_SCENE = scannet_dataset_rgb.ScannetDatasetWholeScene(root=DATA_PATH, block_points=NUM_POINT, split='val')
 
@@ -123,6 +123,7 @@ def train():
             print("--- Get model and loss")
             # Get model and loss
             pred_origin, end_points, external_scene_feature = MODEL.get_scene_model(pointclouds_pl, is_training_pl, NUM_CLASSES, BANDWIDTH, bn_decay=bn_decay)
+            #loss, pred = MODEL.get_scene_loss(cos_loss_weight, pred_origin, labels_pl, labels_onehot_pl, smpws_pl,external_scene_feature,external_scene_encode_pl, end_points['feats'], pointclouds_pl)
             loss, pred = MODEL.get_scene_loss(cos_loss_weight, pred_origin, labels_pl, labels_onehot_pl, smpws_pl,external_scene_feature,external_scene_encode_pl, end_points['feats'], pointclouds_pl[:, :, :3])
             tf.summary.scalar('loss', loss)
 
@@ -216,7 +217,7 @@ def get_batch_wdp(dataset, idxs, start_idx, end_idx):
 
 def get_batch(dataset, idxs, start_idx, end_idx):
     bsize = end_idx-start_idx
-    batch_data = np.zeros((bsize, NUM_POINT, 3))
+    batch_data = np.zeros((bsize, NUM_POINT, 6))
     batch_label = np.zeros((bsize, NUM_POINT), dtype=np.int32)
     batch_smpw = np.zeros((bsize, NUM_POINT), dtype=np.float32)
     for i in range(bsize):
@@ -226,7 +227,7 @@ def get_batch(dataset, idxs, start_idx, end_idx):
         batch_smpw[i,:] = smpw
     return batch_data, batch_label, batch_smpw
 
-weight = [0.1, 0.3, 0.5, 0.7, 0.9, 1, 1, 1, 1.1, 1.1, 1.1]
+weight = [0.1, 0.3, 0.5, 0.7, 0.9, 1, 1, 1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1, 1.1]
 
 def train_scene_one_epoch(sess, ops, train_writer, num_classes, epoch):
     """ ops: dict mapping from string to tf ops """
@@ -254,7 +255,9 @@ def train_scene_one_epoch(sess, ops, train_writer, num_classes, epoch):
         batch_label_onehot = np.eye(num_classes)[batch_label]
         external_batch_scene_encode = np.max(batch_label_onehot,axis=1)
         # Augment batched point clouds by rotation
-        aug_data = provider.rotate_point_cloud_z(batch_data)
+        aug_data = batch_data
+        aug_data[:,:,:3] = provider.rotate_point_cloud_z(aug_data[:,:,:3])
+        print(aug_data.shape)
         #aug_data = provider.rotate_point_cloud(batch_data)
 
         feed_dict = {ops['pointclouds_pl']: aug_data,
@@ -314,7 +317,8 @@ def eval_scene_one_epoch(sess, ops, test_writer,num_classes):
         batch_label_onehot = np.eye(num_classes)[batch_label]
         external_batch_scene_encode = np.max(batch_label_onehot,axis=1)
 
-        aug_data = provider.rotate_point_cloud_z(batch_data)
+        aug_data = batch_data
+        aug_data[:,:,:3] = provider.rotate_point_cloud_z(aug_data[:,:,:3])
         #aug_data = provider.rotate_point_cloud(batch_data)
         bandwidth = BANDWIDTH
 

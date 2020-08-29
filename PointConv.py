@@ -75,7 +75,7 @@ def nonlinear_transform(data_in, mlp, scope, is_training, bn_decay=None, weight_
 
     return net
 
-def feature_encoding_layer(xyz, feature, npoint, radius, sigma, K, mlp, is_training, bn_decay, weight_decay, scope, bn=True, use_xyz=True):
+def feature_encoding_layer(xyz, feature, npoint, radius, sigma, K, mlp, akc_channel, is_training, bn_decay, weight_decay, scope, bn=True, use_xyz=True):
     ''' Input:
             xyz: (batch_size, ndataset, 3) TF tensor
             feature: (batch_size, ndataset, channel) TF tensor
@@ -95,6 +95,73 @@ def feature_encoding_layer(xyz, feature, npoint, radius, sigma, K, mlp, is_train
         else:
             new_xyz = pointconv_util.sampling(npoint, xyz)
 
+        if akc_channel is not None:
+            xyz_4n, feature_4n, idx_4n = pointconv_util.grouping(feature, 4, xyz, xyz)
+            xyz_3n = xyz_4n[:,:,1:4,:]
+            akc_feature = tf_util.akc(xyz_3n, akc_channel, bn, is_training, 0, bn_decay, weight_decay)
+            feature = tf.concat([feature, akc_feature], axis=2)
+        grouped_xyz, grouped_feature, idx = pointconv_util.grouping(feature, K, xyz, new_xyz)
+
+        density = pointconv_util.kernel_density_estimation_ball(xyz, radius, sigma)
+        inverse_density = tf.div(1.0, density)
+        grouped_density = tf.gather_nd(inverse_density, idx) # (batch_size, npoint, nsample, 1)
+        #grouped_density = tf_grouping.group_point(inverse_density, idx)
+        inverse_max_density = tf.reduce_max(grouped_density, axis = 2, keepdims = True)
+        density_scale = tf.div(grouped_density, inverse_max_density)
+
+        #density_scale = tf_grouping.group_point(density, idx)
+
+        for i, num_out_channel in enumerate(mlp):
+            if i != len(mlp) - 1:
+                grouped_feature = tf_util.conv2d(grouped_feature, num_out_channel, [1,1],
+                                            padding='VALID', stride=[1,1],
+                                            bn=bn, is_training=is_training,
+                                            scope='conv%d'%(i), bn_decay=bn_decay, weight_decay = weight_decay) 
+
+        weight = weight_net_hidden(grouped_xyz, [32], scope = 'weight_net', is_training=is_training, bn_decay = bn_decay, weight_decay = weight_decay)
+
+        density_scale = nonlinear_transform(density_scale, [16, 1], scope = 'density_net', is_training=is_training, bn_decay = bn_decay, weight_decay = weight_decay)
+
+        new_points = tf.multiply(grouped_feature, density_scale)
+
+        new_points = tf.transpose(new_points, [0, 1, 3, 2])
+
+        new_points = tf.matmul(new_points, weight)
+
+        new_points = tf_util.conv2d(new_points, mlp[-1], [1,new_points.get_shape()[2].value],
+                                        padding='VALID', stride=[1,1],
+                                        bn=bn, is_training=is_training,
+                                        scope='after_conv', bn_decay=bn_decay, weight_decay = weight_decay) 
+
+        new_points = tf.squeeze(new_points, [2]) # (batch_size, npoints, mlp2[-1])
+
+        return new_xyz, new_points
+
+def feature_encoding_layer_extra(xyz, sample_xyz, feature, npoint, radius, sigma, K, mlp, akc_channel, is_training, bn_decay, weight_decay, scope, bn=True, use_xyz=True):
+    ''' Input:
+            xyz: (batch_size, ndataset, 3) TF tensor
+            feature: (batch_size, ndataset, channel) TF tensor
+            npoint: int32 -- #points sampled in farthest point sampling
+            sigma: float32 -- KDE bandwidth
+            K: int32 -- how many points in each local region
+            mlp: list of int32 -- output size for MLP on each point
+            use_xyz: bool, if True concat XYZ with local point features, otherwise just use point features
+        Return:
+            new_xyz: (batch_size, npoint, 3) TF tensor
+            new_points: (batch_size, npoint, mlp[-1] or mlp2[-1]) TF tensor
+    '''
+    with tf.variable_scope(scope) as sc:
+        num_points = xyz.get_shape()[1]
+        if num_points == npoint:
+            new_xyz = xyz
+        else:
+            new_xyz = sample_xyz
+
+        if akc_channel is not None:
+            xyz_4n, feature_4n, idx_4n = pointconv_util.grouping(feature, 4, xyz, xyz)
+            xyz_3n = xyz_4n[:,:,1:4,:]
+            akc_feature = tf_util.akc(xyz_3n, akc_channel, bn, is_training, 0, bn_decay, weight_decay)
+            feature = tf.concat([feature, akc_feature], axis=2)
         grouped_xyz, grouped_feature, idx = pointconv_util.grouping(feature, K, xyz, new_xyz)
 
         density = pointconv_util.kernel_density_estimation_ball(xyz, radius, sigma)

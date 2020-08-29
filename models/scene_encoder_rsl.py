@@ -13,10 +13,10 @@ sys.path.append(os.path.join(BASE_DIR, '../utils'))
 import tensorflow as tf
 import numpy as np
 import tf_util
-from PointConv import feature_encoding_layer, feature_decoding_layer
+from PointConv import feature_encoding_layer, feature_decoding_layer, feature_encoding_layer_extra
 
 def placeholder_scene_inputs(batch_size, num_point, num_classes):
-    pointclouds_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point, 3))
+    pointclouds_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point, 6))
     labels_pl = tf.placeholder(tf.int32, shape=(batch_size, num_point))
     labels_onehot_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point,num_classes))
     smpws_pl = tf.placeholder(tf.float32, shape=(batch_size, num_point))
@@ -31,19 +31,23 @@ def get_scene_model(point_cloud, is_training, num_class, sigma, bn_decay=None, w
     batch_size = point_cloud.get_shape()[0].value
     num_point = point_cloud.get_shape()[1].value
     end_points = {}
-    l0_xyz = point_cloud
+    l0_xyz = point_cloud[:,:,:3]
     l0_points = point_cloud
+    l0_points_xyz = point_cloud[:,:,:3]
+    l0_points_rgb = point_cloud[:,:,3:]
 
     # Feature encoding layers
-    l1_xyz, l1_points = feature_encoding_layer(l0_xyz, l0_points, npoint=2048, radius = 0.1, sigma = sigma, K=8, mlp=[32,32,32], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1')
-    l1_xyz_1024, l1_points_1024 = feature_encoding_layer(l1_xyz, l1_points, npoint=1024, radius = 0.1, sigma = sigma, K=8, mlp=[32,32,64], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_1024')
-    l1_xyz_512, l1_points_512 = feature_encoding_layer(l1_xyz_1024, l1_points_1024, npoint=512, radius = 0.1, sigma = sigma, K=8, mlp=[64,64,64], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_512')
-    l2_xyz, l2_points = feature_encoding_layer(l1_xyz_512, l1_points_512, npoint=256, radius = 0.2, sigma = 2 * sigma, K=8, mlp=[64,64,128], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer2')
-    l2_xyz_128, l2_points_128 = feature_encoding_layer(l2_xyz, l2_points, npoint=128, radius = 0.2, sigma = 2 * sigma, K=8, mlp=[128,128,128], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer2_128')
-    l3_xyz, l3_points = feature_encoding_layer(l2_xyz_128, l2_points_128, npoint=64, radius = 0.4, sigma = 4 * sigma, K=8, mlp=[128,128,256], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer3')
-    l4_xyz, l4_points = feature_encoding_layer(l3_xyz, l3_points, npoint=36, radius = 0.8, sigma = 8 * sigma, K=8, mlp=[256,256,512], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer4')
+    l1_xyz, l1_points_xyz = feature_encoding_layer(l0_xyz, l0_points_xyz, npoint=2048, radius = 0.1, sigma = sigma, K=8, mlp=[32,32,32], akc_channel = 3, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_xyz')
+    _, l1_points_rgb = feature_encoding_layer_extra(l0_xyz, l1_xyz, l0_points_rgb, npoint=2048, radius = 0.1, sigma = sigma, K=8, mlp=[32,32,32], akc_channel = 3, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_rgb')
+    l1_points = tf.concat([l1_points_xyz, l1_points_rgb], -1)
+    l1_xyz_1024, l1_points_1024 = feature_encoding_layer(l1_xyz, l1_points, npoint=1024, radius = 0.1, sigma = sigma, K=8, mlp=[32,32,64], akc_channel=16, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_1024')
+    l1_xyz_512, l1_points_512 = feature_encoding_layer(l1_xyz_1024, l1_points_1024, npoint=512, radius = 0.1, sigma = sigma, K=8, mlp=[64,64,64], akc_channel=32, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer1_512')
+    l2_xyz, l2_points = feature_encoding_layer(l1_xyz_512, l1_points_512, npoint=256, radius = 0.2, sigma = 2 * sigma, K=8, mlp=[64,64,128], akc_channel=32, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer2')
+    l2_xyz_128, l2_points_128 = feature_encoding_layer(l2_xyz, l2_points, npoint=128, radius = 0.2, sigma = 2 * sigma, K=8, mlp=[128,128,128], akc_channel=None, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer2_128')
+    l3_xyz, l3_points = feature_encoding_layer(l2_xyz_128, l2_points_128, npoint=64, radius = 0.4, sigma = 4 * sigma, K=8, mlp=[128,128,256], akc_channel=None, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer3')
+    l4_xyz, l4_points = feature_encoding_layer(l3_xyz, l3_points, npoint=36, radius = 0.8, sigma = 8 * sigma, K=8, mlp=[256,256,512], akc_channel=None, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='layer4')
 
-    external_l5_xyz,external_l5_points = feature_encoding_layer(l4_xyz, l4_points, npoint=8, radius = 1.6, sigma = 8 * sigma, K=8, mlp=[512,512,512], is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='external_layer5')
+    external_l5_xyz,external_l5_points = feature_encoding_layer(l4_xyz, l4_points, npoint=8, radius = 1.6, sigma = 8 * sigma, K=8, mlp=[512,512,512], akc_channel=None, is_training=is_training, bn_decay=bn_decay, weight_decay = weight_decay, scope='external_layer5')
     external_l6_scene_feature = tf.reduce_mean(external_l5_points,axis=1,keepdims=True)
     external_scene_feature = tf_util.dropout(external_l6_scene_feature, keep_prob=0.5, is_training=is_training, scope='external_dp')
     external_scene_feature = tf_util.conv1d(external_scene_feature, num_class, 1, padding='VALID', activation_fn=None, weight_decay=weight_decay, scope='external_fc')

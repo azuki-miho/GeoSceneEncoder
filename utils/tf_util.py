@@ -50,6 +50,74 @@ def _variable_with_weight_decay(name, shape, stddev, wd, use_xavier=True):
     tf.add_to_collection('losses', weight_decay)
   return var
 
+def akc(inputs, num_output_channels, bn, is_training, idx, bn_decay, weight_decay):
+    """
+    inputs: 4-D tensor BxNx3neighborx3Dim
+    """
+    batch_size, num_points, num_neighbors, num_c = inputs.shape
+    geometry_feature = akc_kernel(inputs, num_output_channels, [1, 1], padding='VALID', stride=[1, 1], bn=bn, is_training=is_training, scope='local%d'%(idx), bn_decay=bn_decay, weight_decay=weight_decay, activation_fn=None)
+    return geometry_feature
+
+def akc_kernel(inputs,
+           num_output_channels,
+           kernel_size,
+           scope,
+           stride=[1, 1],
+           padding='SAME',
+           data_format='NHWC',
+           use_xavier=True,
+           stddev=1e-3,
+           weight_decay=None,
+           activation_fn=tf.nn.relu,
+           bn=False,
+           bn_decay=None,
+           is_training=None):
+
+  #L = 32
+  #M = 16
+  L = num_output_channels
+  M = 3
+  sigma_2 = 0.005 ** 2
+  tmp_length = inputs * inputs
+  tmp_length = tf.reduce_sum(tmp_length, axis=3, keep_dims=True)
+  tmp_length = tf.sqrt(tmp_length)
+  tmp_length = tf.reduce_mean(tmp_length, axis=2, keep_dims=True)
+  tmp_length = tf.tile(tmp_length, [1, 1, inputs.shape[2], inputs.shape[3]])
+  inputs = inputs * 0.005 / (tmp_length + 1e-10)
+
+  with tf.variable_scope(scope) as sc:
+      kernel_h, kernel_w = kernel_size
+      assert(data_format=='NHWC' or data_format=='NCHW')
+      if data_format == 'NHWC':
+        num_in_channels = inputs.get_shape()[-1].value
+      elif data_format=='NCHW':
+        num_in_channels = inputs.get_shape()[1].value
+
+      kernel_shape = [L, M, 3]
+      kernel = _variable_with_weight_decay('weights',
+                                           shape=kernel_shape,
+                                           use_xavier=False,
+                                           stddev=0.2,
+                                           wd=weight_decay)
+      kernels_out_lst = []
+
+      for i in range(L):
+        one_kernel_out_lst = []
+
+        for j in range(M):
+          tmp = tf.exp(-(tf.reduce_sum((inputs - kernel[i, j, :]) ** 2, axis=-1) / (2 * sigma_2)))
+          tmp_mean_neighbor = tf.reduce_mean(tmp, axis=2, keep_dims=True)
+          one_kernel_out_lst.append(tmp_mean_neighbor)
+
+        one_kernel_out = tf.reduce_sum(tf.concat(one_kernel_out_lst, axis=2), axis=2, keep_dims=True)
+        kernels_out_lst.append(one_kernel_out)
+
+      outputs = tf.concat(kernels_out_lst, axis=2)
+
+      print(outputs.shape)
+
+      return outputs
+
 def conv1d(inputs,
            num_output_channels,
            kernel_size,
