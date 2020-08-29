@@ -41,7 +41,7 @@ CUDA_VISIBLE_DEVICES=0 python train_scannet_IoU.py --model scene_encoder_rsl --l
 After training, to generate test results to *dump_%s* directory:
 
 ```
-CUDA_VISIBLE_DEVICES=0 python evaluate_scannet.py --model scene_encoder_rsl --batch_size 8 --model_path scannet_%s
+CUDA_VISIBLE_DEVICES=0 python evaluate_scannet.py --model scene_encoder_rsl --batch_size 8 --model_path scannet_%s --with_rgb
 ```
 
 Then, to upload the results to the ScanNetv2 benchmark server:
@@ -51,7 +51,7 @@ zip out.zip dump_%s/scene*
 
 (Optional) To visualize the results on validation dataset:
 ```
-CUDA_VISIBLE_DEVICES=0 python visualize_scene.py --model scene_encoder_rsl --batch_size 8 --model_path scannet_%s --ply_path DataSet/ScanNetv2/scans
+CUDA_VISIBLE_DEVICES=0 python visualize_scene.py --model scene_encoder_rsl --batch_size 8 --model_path scannet_%s --ply_path DataSet/ScanNetv2/scans --with_rgb
 ```
 
 Modify the model_path to your .ckpt file path and the ply_path to the original [ScanNetv2](http://www.scan-net.org/) ply file.
